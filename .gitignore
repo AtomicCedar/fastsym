@@ -1,0 +1,5 @@
+build/
+*.o
+*.a
+test-*.so
+.backup-fastsym.sh

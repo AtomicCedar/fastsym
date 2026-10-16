@@ -1,0 +1,24 @@
+{
+    global:
+        fastsym_open;
+        fastsym_close;
+        fastsym_sym;
+        fastsym_sym_hash;
+        fastsym_dynsym_hash;
+        fastsym_dynsym;
+        fastsym_dsym;
+        fastsym_dsym_prefix;
+        fastsym_sym_prefix;
+        fastsym_hash_sysv;
+        fastsym_hash_gnu;
+        fastsym_cache_get;
+        fastsym_cache_release;
+        fastsym_addr;
+        fastsym_addr_clean;
+        fastsym_last_error;
+        fastsym_iterate_phdr;
+        fastsym_lib_info;
+
+    local:
+        *;
+};
