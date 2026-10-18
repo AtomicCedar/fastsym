@@ -334,12 +334,78 @@ int fastsym_lib_info(void *handle, fastsym_addr_info_t *info) {
 }
 
 
-int fastsym_enum_symbols(void *handle, fastsym_enum_mode_t mode, const char *pattern, int which,
-                         fastsym_enum_cb_t cb, void *data) {
+int fastsym_sym_at_offset(void *handle, size_t file_offset, fastsym_addr_info_t *info, void **cache) {
+  if (NULL == handle || NULL == info || NULL == cache) {
+    fastsym_set_err(FASTSYM_E_BAD_ARG);
+    return -1;
+  }
+  if (!fast_reg_contains(handle)) {
+    fastsym_set_err(FASTSYM_E_BAD_HANDLE);
+    return -1;
+  }
+  fastsym_addr_info_t lib;
+  if (0 != fastsym_lib_info(handle, &lib) || NULL == lib.lib_base) {
+    fastsym_set_err(FASTSYM_E_LIB_NOT_FOUND);
+    return -1;
+  }
+  // lib_base is the load bias; mapped file offset == load bias + file offset
+  // for the loaded segments this library cares about (same convention as
+  // crash-report "libart.so (offset 0x1234)").
+  void *addr = (char *)lib.lib_base + file_offset;
+  return fastsym_addr_ex(addr, info, cache, FASTSYM_ADDR_DEFAULT);
+}
+
+int fastsym_enum_symbols(void *handle, fastsym_enum_mode_t mode, const char *pattern, int which, fastsym_enum_cb_t cb, void *data) {
   int32_t err = FASTSYM_OK;
   if (NULL != handle && !fast_reg_contains(handle)) {
     fastsym_set_err(FASTSYM_E_BAD_HANDLE);
     return -1;
+  }
+  // DEMANGLE wrapper: trampolines the user cb, demangling each reported name
+  // into a per-call buffer (grown on demand; not thread-safe across concurrent
+  // enum calls with the flag set — serialise like fastsym_addr's cache).
+  if (which & FASTSYM_ENUM_DEMANGLE) {
+    static char *dm_buf = NULL;         // lazily grown, reused across callbacks
+    static size_t dm_cap = 0;
+    struct DmCtx { fastsym_enum_cb_t user; void *data; };
+    struct DmCtx ctx = {cb, data};
+    auto trampoline = [](const char *name, void *addr, size_t size, int is_dynsym,
+                         void *data) -> int {
+      struct DmCtx *c = (struct DmCtx *)data;
+      if (NULL == dm_buf) {
+        dm_cap = 512;
+        dm_buf = (char *)malloc(dm_cap);
+        if (NULL == dm_buf) return c->user(name, addr, size, is_dynsym, c->data);
+      }
+      const char *dm = fastsym_demangle(name, dm_buf, dm_cap);
+      if (dm == dm_buf) return c->user(dm_buf, addr, size, is_dynsym, c->data);  // demangled
+      // pass-through (not mangled / didn't fit): retry once with a bigger buffer
+      if (dm != name) {  // didn't fit
+        size_t need = strlen(name) + 1;
+        if (need > dm_cap) {
+          char *nb = (char *)realloc(dm_buf, need);
+          if (NULL != nb) { dm_buf = nb; dm_cap = need; dm = fastsym_demangle(name, dm_buf, dm_cap); }
+        }
+        if (dm == dm_buf) return c->user(dm_buf, addr, size, is_dynsym, c->data);
+      }
+      return c->user(name, addr, size, is_dynsym, c->data);
+    };
+    int result;
+    struct FsSigGuard g;
+    if (fast_sig_guard_arm(&g)) {
+      result = fast_enum_symbols(handle, (int)mode, pattern,
+                                 which & ~FASTSYM_ENUM_DEMANGLE, trampoline, &ctx);
+      fast_sig_guard_disarm(&g);
+    } else {
+      fast_sig_guard_disarm(&g);
+      err = FASTSYM_E_INTERNAL;
+      result = -1;
+    }
+    if (result < 0 && err == FASTSYM_OK) err = FASTSYM_E_BAD_ARG;
+    if (NULL == handle || NULL == cb) fastsym_set_err(err == FASTSYM_OK ? FASTSYM_E_BAD_ARG : err);
+    else if (result >= 0) fastsym_set_err(FASTSYM_OK);
+    else fastsym_set_err(err);
+    return result;
   }
   int result;
   struct FsSigGuard g;
@@ -398,8 +464,7 @@ const char *fastsym_demangle(const char *mangled, char *buf, size_t buf_len) {
   return buf;
 }
 
-int fastsym_sym_batch(void *handle, const char *const *names, size_t count,
-                      void **out_addrs, size_t *out_sizes) {
+int fastsym_sym_batch(void *handle, const char *const *names, size_t count, void **out_addrs, size_t *out_sizes) {
   if (NULL == handle || NULL == names || (0 != count && NULL == out_addrs)) {
     fastsym_set_err(FASTSYM_E_BAD_ARG);
     return -1;

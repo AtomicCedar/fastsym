@@ -4,6 +4,7 @@
         fastsym_close;
         fastsym_sym;
         fastsym_sym_batch;
+        fastsym_sym_at_offset;
         fastsym_sym_hash;
         fastsym_dynsym_hash;
         fastsym_dynsym;

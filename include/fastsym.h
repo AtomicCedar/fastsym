@@ -44,8 +44,7 @@ void *fastsym_dynsym_hash(void *handle, const char *sym_name, uint32_t sysv_hash
 // receives the address for names[i], NULL on miss. out_sizes optional (NULL ok,
 // else symbol size or 0 per entry). names entries may be NULL (miss).
 // Returns number of hits (0..count); -1 on invalid handle / bad args (out untouched).
-int fastsym_sym_batch(void *handle, const char *const *names, size_t count,
-                      void **out_addrs, size_t *out_sizes);
+int fastsym_sym_batch(void *handle, const char *const *names, size_t count, void **out_addrs, size_t *out_sizes);
 
 // dynsym-only lookup by exact name.
 void *fastsym_dynsym(void *handle, const char *sym_name, size_t *symbol_size);
@@ -87,6 +86,15 @@ int fastsym_addr(void *addr, fastsym_addr_info_t *info, void **cache);
 #define FASTSYM_ADDR_NON_SYM 0x1
 int fastsym_addr_ex(void *addr, fastsym_addr_info_t *info, void **cache, int flags);
 void fastsym_addr_clean(void **cache);
+
+// Symbol lookup by file offset (offset within the mapped ELF image, as found
+// in crash logs / offline so analysis — NOT a runtime address). Internally
+// resolves the library base and forwards to fastsym_addr; equivalent to
+// fastsym_addr((char *)lib_base + file_offset, ...) without the manual
+// base bookkeeping. Same cache usage and thread-safety as fastsym_addr.
+// Returns 1 on hit (info filled), 0 on miss (offset not in this library),
+// -1 on bad args / internal fault (see fastsym_last_error).
+int fastsym_sym_at_offset(void *handle, size_t file_offset, fastsym_addr_info_t *info, void **cache);
 
 // ---- Iterate all loaded ELFs (enhanced dl_iterate_phdr) ---------------------
 // Like dl_iterate_phdr but with corrected full pathnames (on some Android
@@ -158,12 +166,16 @@ typedef enum {
 
 #define FASTSYM_ENUM_DYNSYM 0x1
 #define FASTSYM_ENUM_SYMTAB 0x2
+// Callback name is demangled (Itanium; non-mangled names pass through
+// unchanged). The name points at an internal per-callback buffer — copy it
+// if you need it beyond the callback. Cannot be combined with SYMTAB-only
+// iteration costs; demangling runs per reported symbol.
+#define FASTSYM_ENUM_DEMANGLE 0x4
 
 typedef int (*fastsym_enum_cb_t)(const char *sym_name, void *sym_addr, size_t sym_size,
                                  int is_dynsym, void *data);
 
-int fastsym_enum_symbols(void *handle, fastsym_enum_mode_t mode, const char *pattern, int which,
-                         fastsym_enum_cb_t cb, void *data);
+int fastsym_enum_symbols(void *handle, fastsym_enum_mode_t mode, const char *pattern, int which, fastsym_enum_cb_t cb, void *data);
 
 // ---- Demangling -------------------------------------------------------------
 // Demangles an Itanium C++ mangled name (must start with "_Z") into buf.

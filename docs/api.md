@@ -116,8 +116,7 @@ void *addr = fastsym_dsym_prefix(h, "_ZN3art9ArtMethod7Invoke", NULL);
 ### 批量查找
 
 ```c
-int fastsym_sym_batch(void *handle, const char *const *names, size_t count,
-                      void **out_addrs, size_t *out_sizes);
+int fastsym_sym_batch(void *handle, const char *const *names, size_t count, void **out_addrs, size_t *out_sizes);
 ```
 
 - 一次调用解析 `count` 个符号；每个名字语义与 `fastsym_sym` 相同（dynsym 哈希优先，miss 回退 `.symtab`）。
@@ -125,6 +124,18 @@ int fastsym_sym_batch(void *handle, const char *const *names, size_t count,
 - `out_sizes` 可为 `NULL`；否则每项填符号大小（未知为 0）。
 - 返回命中数（0..count）；句柄无效/参数错误返回 -1（out 不动，看 `fastsym_last_error`）。
 - 线程安全：是（与单个查找一致）。
+
+### 按文件偏移查符号
+
+```c
+int fastsym_sym_at_offset(void *handle, size_t file_offset, fastsym_addr_info_t *info, void **cache);
+```
+
+- 场景：crash log / 离线分析 so 时拿到的是**文件内偏移**（如 `libart.so (offset 0x1234)`），
+  不是运行时地址。内部取库 base 后转发 `fastsym_addr`，等价于
+  `fastsym_addr((char *)lib_base + file_offset, ...)`，免去手动 base 换算。
+- 返回 1 命中（`info` 填充）；0 未命中（偏移不在本库内）；-1 参数错误/内部故障。
+- `cache` 用法与线程安全同 `fastsym_addr`。
 
 ### 哈希函数
 
@@ -223,6 +234,9 @@ int fastsym_iterate_phdr(int (*cb)(fastsym_phdr_info_t *info, void *data), void 
 
 - 与 `dl_iterate_phdr` 等价，但修复了部分 Android 版本上 `dlpi_name` 只有 SONAME 甚至为空的问题（xDL 核心从 maps 解析全路径）。
 - 回调返回非零可提前终止，该值原样透传。
+- `which` 可加 `FASTSYM_ENUM_DEMANGLE`（0x4）：回调收到的 `sym_name` 为 **demangled** 名
+  （非 mangled 名原样透传）。名字指向内部缓冲，**回调外需自行拷贝**；带此 flag 的枚举
+  调用请自行串行化（内部复用一块缓冲）。
 - 整个遍历在 SIGSEGV guard 内执行；回调内不得让 C++ 异常穿越 guard。
 - 典型用途：不确定库名/路径时全量扫描、统计已加载模块。
 
@@ -434,6 +448,9 @@ def sysv_hash(name: str) -> int:
 | `.gnu_debugdata` | 仅当库文件在磁盘上可读（系统库、已解压的库）且含该段时可用；仍打包在 APK 内（`extractNativeLibs=false`）或纯内存加载的库无此回退 |
 | version script | `fastsym.map.txt` 仅作用于 `FASTSYM_SHARED=ON` 的 .so 产物；静态库无导出过滤 |
 | 单例缓存上限 | `fastsym_cache_get` 最多缓存 16 个库；满员时淘汰一个空闲条目（全部在用才返回 `NULL`） |
+| `fastsym_sym_batch` 错误语义 | 任一条目 miss **不是错误**（返回值只计命中数，`last_error` 恒为 `FASTSYM_OK`）；坏句柄 → -1 + `FASTSYM_E_BAD_HANDLE`（out 数组不动）。线程安全同单条查找 |
+| `FASTSYM_ENUM_DEMANGLE` 缓冲 | demangled 名指向**进程级复用缓冲**：回调返回后内容可能被下一个符号覆盖（回调内必须拷贝）；并发带此 flag 的枚举调用会互踩，需自行串行化 |
+| `fastsym_sym_at_offset` 偏移约定 | 按典型的 "load bias + 文件偏移" 计算（即 crash log 里 `libart.so (offset 0x1234)` 的约定）；对被 linker 重定位过多个 segment 的非常规布局不适用，此类情况请直接用 `fastsym_addr` |
 
 ## 五、快速上手
 

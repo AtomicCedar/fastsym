@@ -21,46 +21,44 @@ xDL + NEON-accelerated GNU hash + xz-embedded LZMA symtab decompression).
 ## API
 
 ```c
-void  *fastsym_open(const char *lib_name);
-void   fastsym_close(void *handle);
+void *fastsym_open(const char *lib_name);
+void fastsym_close(void *handle);
 
 // full lookup: dynsym (hash) then .symtab
-void  *fastsym_sym(void *h, const char *name, size_t *sym_size);
+void *fastsym_sym(void *h, const char *name, size_t *sym_size);
 
 // dynsym-only with precomputed hashes (no strcmp on miss)
-void  *fastsym_sym_hash(void *h, const char *name,
-                        uint32_t sysv_hash, uint32_t gnu_hash,
-                        size_t *sym_size);
-void  *fastsym_dynsym_hash(void *h, const char *name,
-                           uint32_t sysv_hash, uint32_t gnu_hash,
-                           size_t *sym_size);
+void *fastsym_sym_hash(void *h, const char *name, uint32_t sysv_hash, uint32_t gnu_hash, size_t *sym_size);
+void *fastsym_dynsym_hash(void *h, const char *name, uint32_t sysv_hash, uint32_t gnu_hash, size_t *sym_size);
 
-void  *fastsym_dynsym(void *h, const char *name, size_t *sym_size);
-void  *fastsym_dsym(void *h, const char *name, size_t *sym_size);       // .symtab
-void  *fastsym_dsym_prefix(void *h, const char *prefix, size_t *sym_size);
-void  *fastsym_sym_prefix(void *h, const char *prefix, size_t *sym_size);
+void *fastsym_dynsym(void *h, const char *name, size_t *sym_size);
+void *fastsym_dsym(void *h, const char *name, size_t *sym_size);       // .symtab
+void *fastsym_dsym_prefix(void *h, const char *prefix, size_t *sym_size);
+void *fastsym_sym_prefix(void *h, const char *prefix, size_t *sym_size);
 
 // batch lookup (per-name semantics of fastsym_sym; returns hit count)
-int    fastsym_sym_batch(void *h, const char *const *names, size_t count,
-                         void **out_addrs, size_t *out_sizes);
+int fastsym_sym_batch(void *h, const char *const *names, size_t count, void **out_addrs, size_t *out_sizes);
 
 uint32_t fastsym_hash_sysv(const char *name);
 uint32_t fastsym_hash_gnu(const char *name);   // NEON-accelerated where available
 
 // address → symbol reverse lookup (enhanced dladdr)
-int   fastsym_addr(void *addr, fastsym_addr_info_t *info, void **cache);
-int   fastsym_addr_ex(void *addr, fastsym_addr_info_t *info, void **cache, int flags);  // FASTSYM_ADDR_NON_SYM: lib-only, faster
-void  fastsym_addr_clean(void **cache);
+int fastsym_addr(void *addr, fastsym_addr_info_t *info, void **cache);
+int fastsym_addr_ex(void *addr, fastsym_addr_info_t *info, void **cache, int flags);  // FASTSYM_ADDR_NON_SYM: lib-only, faster
+void fastsym_addr_clean(void **cache);
+
+// symbol lookup by file offset (crash-log style "libfoo.so +0x1234")
+int fastsym_sym_at_offset(void *handle, size_t file_offset, fastsym_addr_info_t *info, void **cache);
 
 // iterate all loaded ELFs (enhanced dl_iterate_phdr)
-int   fastsym_iterate_phdr(int (*cb)(fastsym_phdr_info_t *info, void *data), void *data);
+int fastsym_iterate_phdr(int (*cb)(fastsym_phdr_info_t *info, void *data), void *data);
 
 // open a handle directly from a dl_phdr_info
-int   fastsym_phdr_to_dl_info(const fastsym_phdr_info_t *info, fastsym_dl_info_t *out);
+int fastsym_phdr_to_dl_info(const fastsym_phdr_info_t *info, fastsym_dl_info_t *out);
 void *fastsym_open2(const fastsym_dl_info_t *dl_info);
 
 // library info of an existing handle (custom dlinfo); last error: fastsym_last_error
-int   fastsym_lib_info(void *handle, fastsym_addr_info_t *info);
+int fastsym_lib_info(void *handle, fastsym_addr_info_t *info);
 ```
 
 C++:
