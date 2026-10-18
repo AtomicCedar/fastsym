@@ -39,6 +39,14 @@ void *fastsym_sym(void *handle, const char *sym_name, size_t *symbol_size);
 void *fastsym_sym_hash(void *handle, const char *sym_name, uint32_t sysv_hash, uint32_t gnu_hash, size_t *symbol_size);
 void *fastsym_dynsym_hash(void *handle, const char *sym_name, uint32_t sysv_hash, uint32_t gnu_hash, size_t *symbol_size);
 
+// Batch lookup: resolves count names in one call. Per-name semantics identical
+// to fastsym_sym (dynsym via hash first, then .symtab fallback); out_addrs[i]
+// receives the address for names[i], NULL on miss. out_sizes optional (NULL ok,
+// else symbol size or 0 per entry). names entries may be NULL (miss).
+// Returns number of hits (0..count); -1 on invalid handle / bad args (out untouched).
+int fastsym_sym_batch(void *handle, const char *const *names, size_t count,
+                      void **out_addrs, size_t *out_sizes);
+
 // dynsym-only lookup by exact name.
 void *fastsym_dynsym(void *handle, const char *sym_name, size_t *symbol_size);
 

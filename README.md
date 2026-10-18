@@ -40,6 +40,10 @@ void  *fastsym_dsym(void *h, const char *name, size_t *sym_size);       // .symt
 void  *fastsym_dsym_prefix(void *h, const char *prefix, size_t *sym_size);
 void  *fastsym_sym_prefix(void *h, const char *prefix, size_t *sym_size);
 
+// batch lookup (per-name semantics of fastsym_sym; returns hit count)
+int    fastsym_sym_batch(void *h, const char *const *names, size_t count,
+                         void **out_addrs, size_t *out_sizes);
+
 uint32_t fastsym_hash_sysv(const char *name);
 uint32_t fastsym_hash_gnu(const char *name);   // NEON-accelerated where available
 

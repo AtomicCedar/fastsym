@@ -113,6 +113,19 @@ void *addr = fastsym_dsym_prefix(h, "_ZN3art9ArtMethod7Invoke", NULL);
 
 ---
 
+### 批量查找
+
+```c
+int fastsym_sym_batch(void *handle, const char *const *names, size_t count,
+                      void **out_addrs, size_t *out_sizes);
+```
+
+- 一次调用解析 `count` 个符号；每个名字语义与 `fastsym_sym` 相同（dynsym 哈希优先，miss 回退 `.symtab`）。
+- `out_addrs[i]` = `names[i]` 的地址，miss 为 `NULL`；`names[i]` 本身可为 `NULL`（按 miss 处理）。
+- `out_sizes` 可为 `NULL`；否则每项填符号大小（未知为 0）。
+- 返回命中数（0..count）；句柄无效/参数错误返回 -1（out 不动，看 `fastsym_last_error`）。
+- 线程安全：是（与单个查找一致）。
+
 ### 哈希函数
 
 ```c

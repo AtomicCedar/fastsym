@@ -398,6 +398,35 @@ const char *fastsym_demangle(const char *mangled, char *buf, size_t buf_len) {
   return buf;
 }
 
+int fastsym_sym_batch(void *handle, const char *const *names, size_t count,
+                      void **out_addrs, size_t *out_sizes) {
+  if (NULL == handle || NULL == names || (0 != count && NULL == out_addrs)) {
+    fastsym_set_err(FASTSYM_E_BAD_ARG);
+    return -1;
+  }
+  if (!fast_reg_contains(handle)) {
+    fastsym_set_err(FASTSYM_E_BAD_HANDLE);
+    return -1;
+  }
+  int hits = 0;
+  for (size_t i = 0; i < count; i++) {
+    void *addr = NULL;
+    size_t sz = 0;
+    const char *name = names[i];
+    if (NULL != name) {
+      const uint32_t sysv = fastsym_hash_sysv(name);
+      const uint32_t gnu = fastsym_hash_gnu(name);
+      addr = fast_lookup_hash(xdl_sym_hash, handle, name, sysv, gnu, &sz);
+      if (NULL == addr) addr = fast_lookup(fast_dsym, handle, name, &sz);
+    }
+    out_addrs[i] = addr;
+    if (NULL != out_sizes) out_sizes[i] = sz;
+    if (NULL != addr) hits++;
+  }
+  fastsym_set_err(FASTSYM_OK);
+  return hits;
+}
+
 uint32_t fastsym_hash_sysv(const char *sym_name) {
   uint32_t h = 0;
   for (uint32_t g = 0; *sym_name;) {
