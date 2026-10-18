@@ -45,6 +45,7 @@ uint32_t fastsym_hash_gnu(const char *name);   // NEON-accelerated where availab
 
 // address → symbol reverse lookup (enhanced dladdr)
 int   fastsym_addr(void *addr, fastsym_addr_info_t *info, void **cache);
+int   fastsym_addr_ex(void *addr, fastsym_addr_info_t *info, void **cache, int flags);  // FASTSYM_ADDR_NON_SYM: lib-only, faster
 void  fastsym_addr_clean(void **cache);
 
 // iterate all loaded ELFs (enhanced dl_iterate_phdr)

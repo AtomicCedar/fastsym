@@ -222,40 +222,6 @@ int fastsym_lib_info(void *handle, fastsym_addr_info_t *info);
 - 填充 `lib_path` / `lib_base`（`sym_*` 字段保持空，符号归因用 `fastsym_addr`）。
 - 返回 0 成功；-1 参数错误或内部故障（看 `fastsym_last_error`）。
 
-### 从 dl_phdr_info 直接建句柄
-
-```c
-typedef struct {
-  const char *dlpi_name;   // 库名（可为 ""，如主程序）
-  void *dlpi_addr;         // load bias
-  const void *dlpi_phdr;   // ELF program headers
-  int dlpi_phnum;          // program header 数量
-} fastsym_dl_info_t;
-
-int  fastsym_phdr_to_dl_info(const fastsym_phdr_info_t *info, fastsym_dl_info_t *out);
-void *fastsym_open2(const fastsym_dl_info_t *dl_info);
-```
-
-- `fastsym_open2`：由已知的 `dl_phdr_info` 直接建立句柄，**跳过文件名匹配**，常用于
-  `fastsym_iterate_phdr` 回调中当场打开（回调 info 先经 `fastsym_phdr_to_dl_info` 转换），
-  也可接收系统 `dl_iterate_phdr` 的原生 info。
-- 句柄用法与 `fastsym_open` 完全一致，用 `fastsym_close` 释放。
-- `fastsym_phdr_to_dl_info`：返回 0 成功；-1 参数错误。`out->dlpi_name` 指向 `info->lib_path`。
-- 返回 `NULL` 表示参数错误或内部故障（看 `fastsym_last_error`）。
-
-### 与 xDL 的 API 对应
-
-| xDL API | fastsym API |
-|---|---|
-| `xdl_open` / `xdl_close` | `fastsym_open` / `fastsym_close` |
-| `xdl_open2` | `fastsym_open2`（+ `fastsym_phdr_to_dl_info` 辅助转换） |
-| `xdl_sym` / `xdl_dsym` | `fastsym_sym` / `fastsym_dsym`（另加 hash / prefix / 缓存变体） |
-| `xdl_addr` / `xdl_addr4` / `xdl_addr_clean` | `fastsym_addr` / `fastsym_addr_clean` |
-| `xdl_iterate_phdr` | `fastsym_iterate_phdr` |
-| `xdl_info`（`XDL_DI_DLINFO`） | `fastsym_lib_info` |
-
-xDL 公开 API 已 100% 覆盖；额外能力（编译期哈希、NEON GNU hash、`.gnu_debugdata` LZMA symtab、缓存层）为 fastsym 增强。原始 `xdl_*` 符号不导出（`fastsym.map.txt` 收窄），避免符号冲突。
-
 ### 符号枚举（模糊匹配）
 
 ```c
@@ -328,6 +294,40 @@ bool fastsym_is_valid(void *handle);
 - 线程安全：是（内部注册表有锁）；但 close 与 is_valid/查找并发时仍以 close 为准（use-after-close 本身是调用方错误）。
 
 ---
+
+### 从 dl_phdr_info 直接建句柄
+
+```c
+typedef struct {
+  const char *dlpi_name;   // 库名（可为 ""，如主程序）
+  void *dlpi_addr;         // load bias
+  const void *dlpi_phdr;   // ELF program headers
+  int dlpi_phnum;          // program header 数量
+} fastsym_dl_info_t;
+
+int  fastsym_phdr_to_dl_info(const fastsym_phdr_info_t *info, fastsym_dl_info_t *out);
+void *fastsym_open2(const fastsym_dl_info_t *dl_info);
+```
+
+- `fastsym_open2`：由已知的 `dl_phdr_info` 直接建立句柄，**跳过文件名匹配**，常用于
+  `fastsym_iterate_phdr` 回调中当场打开（回调 info 先经 `fastsym_phdr_to_dl_info` 转换），
+  也可接收系统 `dl_iterate_phdr` 的原生 info。
+- 句柄用法与 `fastsym_open` 完全一致，用 `fastsym_close` 释放。
+- `fastsym_phdr_to_dl_info`：返回 0 成功；-1 参数错误。`out->dlpi_name` 指向 `info->lib_path`。
+- 返回 `NULL` 表示参数错误或内部故障（看 `fastsym_last_error`）。
+
+### 与 xDL 的 API 对应
+
+| xDL API | fastsym API |
+|---|---|
+| `xdl_open` / `xdl_close` | `fastsym_open` / `fastsym_close` |
+| `xdl_open2` | `fastsym_open2`（+ `fastsym_phdr_to_dl_info` 辅助转换） |
+| `xdl_sym` / `xdl_dsym` | `fastsym_sym` / `fastsym_dsym`（另加 hash / prefix / 缓存变体） |
+| `xdl_addr` / `xdl_addr4` / `xdl_addr_clean` | `fastsym_addr` / `fastsym_addr_ex`（flags 对齐 `xdl_addr4`） / `fastsym_addr_clean` |
+| `xdl_iterate_phdr` | `fastsym_iterate_phdr` |
+| `xdl_info`（`XDL_DI_DLINFO`） | `fastsym_lib_info` |
+
+xDL 公开 API 已 100% 覆盖；额外能力（编译期哈希、NEON GNU hash、`.gnu_debugdata` LZMA symtab、缓存层）为 fastsym 增强。原始 `xdl_*` 符号不导出（`fastsym.map.txt` 收窄），避免符号冲突。
 
 ## 二、可选缓存
 

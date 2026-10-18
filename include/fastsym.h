@@ -120,15 +120,6 @@ void *fastsym_open2(const fastsym_dl_info_t *dl_info);
 // Returns 0 on success, -1 on bad args / internal fault.
 int fastsym_lib_info(void *handle, fastsym_addr_info_t *info);
 
-// ---- Thread-local last error ------------------------------------------------
-// 0 (FASTSYM_OK) after success; see enum FastSymErr in cpp for codes. Only
-// genuine failures (bad args, library not found, internal fault) update it —
-// "symbol not found" is a normal NULL result, not an error.
-int32_t fastsym_last_error(void);
-
-// NEON-accelerated GNU hash; automatically used by fastsym_hash_gnu where available.
-uint32_t fast_calculate_gnu_hash_neon(const char *name);
-
 // ---- Symbol enumeration (fuzzy matching) ------------------------------------
 // Iterates a library's symbols and invokes cb for each match. Deterministic
 // string filtering - not fuzzy in the AI sense:
@@ -181,6 +172,15 @@ const char *fastsym_demangle(const char *mangled, char *buf, size_t buf_len);
 // pointer) returns false instead of arming the SIGSEGV guard, and lookups on
 // an invalid handle set FASTSYM_E_BAD_HANDLE instead of FASTSYM_E_INTERNAL.
 bool fastsym_is_valid(void *handle);
+
+// ---- Thread-local last error ------------------------------------------------
+// 0 (FASTSYM_OK) after success; see enum FastSymErr in cpp for codes. Only
+// genuine failures (bad args, library not found, internal fault) update it —
+// "symbol not found" is a normal NULL result, not an error.
+int32_t fastsym_last_error(void);
+
+// NEON-accelerated GNU hash; automatically used by fastsym_hash_gnu where available.
+uint32_t fast_calculate_gnu_hash_neon(const char *name);
 
 // ---- Optional per-library symbol cache ------------------------------------
 // Thread-safe lazy singletons. fastsym_cache_get() opens the library on first

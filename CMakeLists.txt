@@ -40,11 +40,10 @@ target_include_directories(fastsym PRIVATE
   cpp/third_party/xz-embedded
 )
 
-# xz-embedded: decoder-only, CRC32. NOTE: do NOT pass -DXZ_DEC_*_BCJ ids here
-# (even =0): xz_private.h uses #if defined(...), so defining any of them turns
-# BCJ on and the link then fails on missing xz_dec_bcj*. Only ANY_CHECK is set.
+# xz-embedded: decoder-only, CRC32, no BCJ override needed at runtime
 target_compile_definitions(fastsym PRIVATE
-  XZ_DEC_ANY_CHECK=1
+  XZ_DEC_X86=0 XZ_DEC_POWERPC=0 XZ_DEC_IA64=0 XZ_DEC_ARM=0 XZ_DEC_ARMTHUMB=0
+  XZ_DEC_SPARC=0 XZ_DEC_ARM64=0 XZ_DEC_RISCV=0 XZ_DEC_ANY_CHECK=1
 )
 
 if(NOT FASTSYM_LIBCXX_DIR STREQUAL "")

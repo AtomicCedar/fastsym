@@ -17,13 +17,13 @@
         fastsym_addr_ex;
         fastsym_addr_clean;
         fastsym_last_error;
-        fastsym_enum_symbols;
-        fastsym_demangle;
-        fastsym_is_valid;
         fastsym_iterate_phdr;
         fastsym_lib_info;
         fastsym_open2;
         fastsym_phdr_to_dl_info;
+        fastsym_enum_symbols;
+        fastsym_demangle;
+        fastsym_is_valid;
 
     local:
         *;
