@@ -100,6 +100,7 @@ target_link_libraries(mylib fastsym log)
 - fastsym: [MIT](LICENSE)
 - xDL: [MIT](cpp/third_party/xdl/LICENSE)
 - xz-embedded: [0BSD](cpp/third_party/xz-embedded/COPYING)
+- LLVM demangler: [Apache-2.0 with LLVM exception](cpp/third_party/llvm-demangle/LICENSE.TXT)
 - android-inline-hook: [MIT](cpp/LICENSE)
 
 

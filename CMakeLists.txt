@@ -26,9 +26,11 @@ add_library(fastsym STATIC
   cpp/fs_gnu_hash_neon.cc
   cpp/third_party/xdl/xdl_iterate.c
   cpp/third_party/xdl/xdl_linker.c
+  cpp/third_party/llvm-demangle
   cpp/third_party/xz-embedded/xz_crc32.c
   cpp/third_party/xz-embedded/xz_dec_stream.c
   cpp/third_party/xz-embedded/xz_dec_lzma2.c
+  cpp/third_party/llvm-demangle/ItaniumDemangle.cpp
 )
 
 target_include_directories(fastsym PUBLIC include)

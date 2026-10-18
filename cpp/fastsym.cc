@@ -25,6 +25,55 @@ int32_t fastsym_last_error(void) { return tls_err; }
 
 static inline void fastsym_set_err(int32_t e) { tls_err = e; }
 
+// ---- handle registry (pure facade-level validity tracking) ------------------
+// xdl_t is vendored (third_party untouched), so validity is tracked here: a
+// lock-protected set of live handles. fastsym_is_valid() answers O(n) over
+// live handles (typically 1-3); use-after-close returns false instead of
+// arming the SIGSEGV guard.
+static pthread_mutex_t g_reg_lock = PTHREAD_MUTEX_INITIALIZER;
+struct FsRegNode { void *handle; struct FsRegNode *next; };
+static struct FsRegNode *g_reg_head = NULL;
+
+static void fast_reg_add(void *h) {
+  if (NULL == h) return;
+  struct FsRegNode *n = (struct FsRegNode *)malloc(sizeof(struct FsRegNode));
+  if (NULL == n) return;  // registry full-RAM is pathological; lookups still work
+  n->handle = h;
+  pthread_mutex_lock(&g_reg_lock);
+  n->next = g_reg_head;
+  g_reg_head = n;
+  pthread_mutex_unlock(&g_reg_lock);
+}
+
+static void fast_reg_remove(void *h) {
+  pthread_mutex_lock(&g_reg_lock);
+  struct FsRegNode **pp = &g_reg_head;
+  while (*pp) {
+    if ((*pp)->handle == h) {
+      struct FsRegNode *dead = *pp;
+      *pp = dead->next;
+      free(dead);
+      break;
+    }
+    pp = &(*pp)->next;
+  }
+  pthread_mutex_unlock(&g_reg_lock);
+}
+
+static bool fast_reg_contains(void *h) {
+  if (NULL == h) return false;
+  pthread_mutex_lock(&g_reg_lock);
+  for (struct FsRegNode *p = g_reg_head; p; p = p->next) {
+    if (p->handle == h) { pthread_mutex_unlock(&g_reg_lock); return true; }
+  }
+  pthread_mutex_unlock(&g_reg_lock);
+  return false;
+}
+
+bool fastsym_is_valid(void *handle) { return fast_reg_contains(handle); }
+
+
+
 
 // Wraps a lookup in a SIGSEGV/SIGBUS guard (same as ShadowHook's sh_xdl.c):
 // a soinfo layout mismatch on some device returns NULL instead of crashing
@@ -35,6 +84,7 @@ static void *guarded_lookup(void *(*fn)(void *, const char *, size_t *), void *h
   void *result = NULL;
   struct FsSigGuard g;
   if (fast_sig_guard_arm(&g)) {
+    if (!fast_reg_contains(handle)) { fast_sig_guard_disarm(&g); return NULL; }
     result = fn(handle, name, symbol_size);
     fast_sig_guard_disarm(&g);
   } else {
@@ -49,12 +99,34 @@ static void *guarded_lookup_hash(void *(*fn)(void *, const char *, uint32_t, uin
   void *result = NULL;
   struct FsSigGuard g;
   if (fast_sig_guard_arm(&g)) {
+    if (!fast_reg_contains(handle)) { fast_sig_guard_disarm(&g); return NULL; }
     result = fn(handle, name, sysv_hash, gnu_hash, symbol_size);
     fast_sig_guard_disarm(&g);
   } else {
     fast_sig_guard_disarm(&g);
   }
   return result;
+}
+
+// guarded lookup + handle validation + last_error bookkeeping. All public
+// lookup wrappers funnel through here: an invalid handle short-circuits to
+// NULL with FASTSYM_E_BAD_HANDLE (no guard round-trip on garbage pointers).
+static void *fast_lookup(void *(*fn)(void *, const char *, size_t *), void *handle,
+                         const char *name, size_t *symbol_size) {
+  if (NULL == handle) { fastsym_set_err(FASTSYM_E_BAD_ARG); return NULL; }
+  if (!fast_reg_contains(handle)) { fastsym_set_err(FASTSYM_E_BAD_HANDLE); return NULL; }
+  void *r = guarded_lookup(fn, handle, name, symbol_size);
+  fastsym_set_err(NULL != r ? FASTSYM_OK : FASTSYM_OK);  // miss is not an error
+  return r;
+}
+static void *fast_lookup_hash(void *(*fn)(void *, const char *, uint32_t, uint32_t, size_t *),
+                              void *handle, const char *name, uint32_t sysv_hash,
+                              uint32_t gnu_hash, size_t *symbol_size) {
+  if (NULL == handle) { fastsym_set_err(FASTSYM_E_BAD_ARG); return NULL; }
+  if (!fast_reg_contains(handle)) { fastsym_set_err(FASTSYM_E_BAD_HANDLE); return NULL; }
+  void *r = guarded_lookup_hash(fn, handle, name, sysv_hash, gnu_hash, symbol_size);
+  fastsym_set_err(FASTSYM_OK);
+  return r;
 }
 
 void *fastsym_open(const char *lib_name) {
@@ -66,20 +138,22 @@ void *fastsym_open(const char *lib_name) {
   } else {
     fast_sig_guard_disarm(&g);
   }
+  fast_reg_add(result);
   fastsym_set_err(NULL != result ? FASTSYM_OK
                                  : (NULL == lib_name ? FASTSYM_E_BAD_ARG : FASTSYM_E_LIB_NOT_FOUND));
   return result;
 }
 
-void fastsym_close(void *handle) {
+void fastsym_close(void *handle) {fast_reg_remove(handle);
+
   fast_sym_index_drop(handle);
   xdl_close(handle);
 }
 
 void *fastsym_sym(void *handle, const char *sym_name, size_t *symbol_size) {
   size_t sz = 0;
-  void *addr = guarded_lookup(xdl_sym, handle, sym_name, &sz);
-  if (NULL == addr) addr = guarded_lookup(fast_dsym, handle, sym_name, &sz);
+  void *addr = fast_lookup(xdl_sym, handle, sym_name, &sz);
+  if (NULL == addr) addr = fast_lookup(fast_dsym, handle, sym_name, &sz);
   if (NULL != symbol_size) *symbol_size = sz;
   if (NULL == addr && (NULL == handle || NULL == sym_name)) fastsym_set_err(FASTSYM_E_BAD_ARG);
   else if (NULL != addr) fastsym_set_err(FASTSYM_OK);
@@ -87,27 +161,27 @@ void *fastsym_sym(void *handle, const char *sym_name, size_t *symbol_size) {
 }
 
 void *fastsym_sym_hash(void *handle, const char *sym_name, uint32_t sysv_hash, uint32_t gnu_hash, size_t *symbol_size) {
-  return guarded_lookup_hash(xdl_sym_hash, handle, sym_name, sysv_hash, gnu_hash, symbol_size);
+  return fast_lookup_hash(xdl_sym_hash, handle, sym_name, sysv_hash, gnu_hash, symbol_size);
 }
 
 void *fastsym_dynsym_hash(void *handle, const char *sym_name, uint32_t sysv_hash, uint32_t gnu_hash, size_t *symbol_size) {
-  return guarded_lookup_hash(xdl_dynsym_hash, handle, sym_name, sysv_hash, gnu_hash, symbol_size);
+  return fast_lookup_hash(xdl_dynsym_hash, handle, sym_name, sysv_hash, gnu_hash, symbol_size);
 }
 
 void *fastsym_dynsym(void *handle, const char *sym_name, size_t *symbol_size) {
-  return guarded_lookup(xdl_sym, handle, sym_name, symbol_size);
+  return fast_lookup(xdl_sym, handle, sym_name, symbol_size);
 }
 
 void *fastsym_dsym(void *handle, const char *sym_name, size_t *symbol_size) {
-  return guarded_lookup(fast_dsym, handle, sym_name, symbol_size);
+  return fast_lookup(fast_dsym, handle, sym_name, symbol_size);
 }
 
 void *fastsym_dsym_prefix(void *handle, const char *sym_prefix, size_t *symbol_size) {
-  return guarded_lookup(fast_dsym_prefix, handle, sym_prefix, symbol_size);
+  return fast_lookup(fast_dsym_prefix, handle, sym_prefix, symbol_size);
 }
 
 void *fastsym_sym_prefix(void *handle, const char *sym_prefix, size_t *symbol_size) {
-  return guarded_lookup(xdl_sym_prefix, handle, sym_prefix, symbol_size);
+  return fast_lookup(xdl_sym_prefix, handle, sym_prefix, symbol_size);
 }
 
 // Address → library/symbol info (enhanced dladdr, xDL core). Returns 1 on hit.
@@ -257,6 +331,71 @@ int fastsym_lib_info(void *handle, fastsym_addr_info_t *info) {
   }
   fastsym_set_err(err);
   return result;
+}
+
+
+int fastsym_enum_symbols(void *handle, fastsym_enum_mode_t mode, const char *pattern, int which,
+                         fastsym_enum_cb_t cb, void *data) {
+  int32_t err = FASTSYM_OK;
+  if (NULL != handle && !fast_reg_contains(handle)) {
+    fastsym_set_err(FASTSYM_E_BAD_HANDLE);
+    return -1;
+  }
+  int result;
+  struct FsSigGuard g;
+  if (fast_sig_guard_arm(&g)) {
+    result = fast_enum_symbols(handle, (int)mode, pattern, which, cb, data);
+    fast_sig_guard_disarm(&g);
+  } else {
+    fast_sig_guard_disarm(&g);
+    err = FASTSYM_E_INTERNAL;
+    result = -1;
+  }
+  if (result < 0 && err == FASTSYM_OK) err = FASTSYM_E_BAD_ARG;  // arg validation rejected
+  if (NULL == handle || NULL == cb) fastsym_set_err(err == FASTSYM_OK ? FASTSYM_E_BAD_ARG : err);
+  else if (result >= 0) fastsym_set_err(FASTSYM_OK);
+  else fastsym_set_err(err);
+  return result;
+}
+
+
+// ---- demangle ---------------------------------------------------------------
+#include "third_party/llvm-demangle/llvm/Demangle/Demangle.h"
+
+const char *fastsym_demangle(const char *mangled, char *buf, size_t buf_len) {
+  if (NULL == mangled || NULL == buf || 0 == buf_len) {
+    fastsym_set_err(FASTSYM_E_BAD_ARG);
+    return mangled;  // invalid args: pass input through untouched
+  }
+
+  struct FsSigGuard g;
+  if (!fast_sig_guard_arm(&g)) {
+    fast_sig_guard_disarm(&g);
+    fastsym_set_err(FASTSYM_E_INTERNAL);
+    return mangled;
+  }
+
+  char *result = NULL;
+  if (mangled[0] == '_' && mangled[1] == 'Z') {
+    result = llvm::itaniumDemangle(std::string_view(mangled), true);
+  }
+  fast_sig_guard_disarm(&g);
+
+  if (NULL == result) {  // not a mangling / invalid → not an error, pass through
+    fastsym_set_err(FASTSYM_OK);
+    return mangled;
+  }
+
+  size_t n = strlen(result);
+  if (n >= buf_len) {  // doesn't fit → pass original through (documented)
+    free(result);
+    fastsym_set_err(FASTSYM_OK);
+    return mangled;
+  }
+  memcpy(buf, result, n + 1);
+  free(result);
+  fastsym_set_err(FASTSYM_OK);
+  return buf;
 }
 
 uint32_t fastsym_hash_sysv(const char *sym_name) {

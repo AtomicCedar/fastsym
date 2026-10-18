@@ -12,6 +12,7 @@ enum FastSymErr {
   FASTSYM_OK = 0,
   FASTSYM_E_BAD_ARG = 1,        // NULL handle / NULL name
   FASTSYM_E_LIB_NOT_FOUND = 2,  // fastsym_open: library not loaded in this process
+  FASTSYM_E_BAD_HANDLE = 4,     // handle not from fastsym_open / already closed
   FASTSYM_E_INTERNAL = 3,       // unexpected fault caught by SIGSEGV guard (layout mismatch etc.)
 };
 

@@ -129,6 +129,59 @@ int32_t fastsym_last_error(void);
 // NEON-accelerated GNU hash; automatically used by fastsym_hash_gnu where available.
 uint32_t fast_calculate_gnu_hash_neon(const char *name);
 
+// ---- Symbol enumeration (fuzzy matching) ------------------------------------
+// Iterates a library's symbols and invokes cb for each match. Deterministic
+// string filtering - not fuzzy in the AI sense:
+//
+//   FASTSYM_ENUM_EXACT   name == pattern (same as fastsym_sym, but reports
+//                        every match incl. .llvm.<n> suffixed duplicates)
+//   FASTSYM_ENUM_PREFIX  name starts with pattern
+//   FASTSYM_ENUM_SUBSTR  pattern occurs anywhere in name
+//
+// which: bit mask of FASTSYM_ENUM_DYNSYM / FASTSYM_ENUM_SYMTAB (0 = dynsym only).
+//   DYNSYM: exported dynamic symbols (linker-visible, always available)
+//   SYMTAB: full static table incl. hidden symbols (needs readable file /
+//           .gnu_debugdata; silently skipped when unavailable)
+//
+// cb receives: name (mangled), exact runtime address, symbol size (0 unknown),
+// is_dynsym (1 from .dynsym, 0 from .symtab), user data. Return non-zero from
+// cb to stop early; that value is returned. Returns -1 on bad args/internal
+// fault (see fastsym_last_error), otherwise the cb stop value (0 = full pass).
+//
+// Duplicate names (local defs, LLVM suffix clones) are reported as separate
+// callbacks with their own addresses. No ordering guarantee across tables;
+// within one table it follows symbol-table order.
+typedef enum {
+  FASTSYM_ENUM_EXACT = 0,
+  FASTSYM_ENUM_PREFIX = 1,
+  FASTSYM_ENUM_SUBSTR = 2,
+} fastsym_enum_mode_t;
+
+#define FASTSYM_ENUM_DYNSYM 0x1
+#define FASTSYM_ENUM_SYMTAB 0x2
+
+typedef int (*fastsym_enum_cb_t)(const char *sym_name, void *sym_addr, size_t sym_size,
+                                 int is_dynsym, void *data);
+
+int fastsym_enum_symbols(void *handle, fastsym_enum_mode_t mode, const char *pattern, int which,
+                         fastsym_enum_cb_t cb, void *data);
+
+// ---- Demangling -------------------------------------------------------------
+// Demangles an Itanium C++ mangled name (must start with "_Z") into buf.
+// Returns buf on success. NOT an error when mangled is invalid / not a
+// mangling / output doesn't fit buf_len: the original mangled pointer is
+// returned unchanged and last_error stays OK (callers can detect pass-through
+// by checking return != buf). buf may be any caller-provided buffer; a 256-
+// byte buffer covers virtually all real symbols.
+const char *fastsym_demangle(const char *mangled, char *buf, size_t buf_len);
+
+// ---- Handle validation ------------------------------------------------------
+// Returns true if handle is a live handle from fastsym_open() that has not
+// been closed yet. Pure facade-level bookkeeping: use-after-close (or garbage
+// pointer) returns false instead of arming the SIGSEGV guard, and lookups on
+// an invalid handle set FASTSYM_E_BAD_HANDLE instead of FASTSYM_E_INTERNAL.
+bool fastsym_is_valid(void *handle);
+
 // ---- Optional per-library symbol cache ------------------------------------
 // Thread-safe lazy singletons. fastsym_cache_get() opens the library on first
 // call and reuses the handle afterwards; fastsym_cache_release() drops one

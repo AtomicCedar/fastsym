@@ -337,3 +337,82 @@ void *fast_dsym_prefix(void *handle, const char *prefix, size_t *symbol_size) {
     return NULL;
   }
 }
+
+// ---- Symbol enumeration ------------------------------------------------------
+#ifndef FASTSYM_ENUM_DYNSYM
+#define FASTSYM_ENUM_DYNSYM 0x1
+#define FASTSYM_ENUM_SYMTAB 0x2
+#endif
+
+
+static int fast_enum_match(int mode, const char *name, const char *pattern, size_t pattern_len) {
+  switch (mode) {
+    case 0:  // EXACT (full strcmp)
+      return 0 == strcmp(name, pattern);
+    case 1:  // PREFIX
+      return 0 == strncmp(name, pattern, pattern_len);
+    default:  // SUBSTR
+      return NULL != strstr(name, pattern);
+  }
+}
+
+static int fast_enum_table(xdl_t *self, int mode, const char *pattern, int is_dynsym,
+                           ElfW(Sym) *symbols, size_t symbols_cnt, const char *strtab,
+                           size_t strtab_sz,
+                           int (*cb)(const char *, void *, size_t, int, void *), void *data) {
+  if (NULL == symbols || 0 == symbols_cnt) return 0;
+
+  size_t pattern_len = pattern ? strlen(pattern) : 0;
+  if (0 == pattern_len && 0 != mode) return 0;  // empty pattern only meaningful for EXACT-all
+
+  for (size_t i = 0; i < symbols_cnt; i++) {
+    ElfW(Sym) *sym = symbols + i;
+
+    if (!XDL_SYMTAB_IS_EXPORT_SYM(sym->st_shndx)) continue;
+    if (sym->st_name >= strtab_sz) continue;
+    const char *name = strtab + sym->st_name;
+    if (0 == name[0]) continue;
+    if (!fast_enum_match(mode, name, pattern, pattern_len)) continue;
+
+    size_t size = 0;
+    void *addr = xdl_resolve_symbol_address(self, sym, &size);
+    int r = cb(name, addr, size, is_dynsym, data);
+    if (0 != r) return r;
+  }
+  return 0;
+}
+
+int fast_enum_symbols(void *handle, int mode, const char *pattern, int which,
+                      int (*cb)(const char *sym_name, void *sym_addr, size_t sym_size,
+                                int is_dynsym, void *data),
+                      void *data) {
+  if (NULL == handle || NULL == cb || mode < 0 || mode > 2 ||
+      (0 == which || 0 != (which & ~(FASTSYM_ENUM_DYNSYM | FASTSYM_ENUM_SYMTAB))) ||
+      (0 != mode && NULL == pattern)) {
+    return -1;
+  }
+
+  xdl_t *self = (xdl_t *)handle;
+  int result = 0;
+
+  if (which & FASTSYM_ENUM_DYNSYM) {
+    xdl_ensure_dynsym_loaded(self);
+    size_t cnt = xdl_dynsym_count(self);
+    if (0 != self->dynsym) {
+      result = fast_enum_table(self, mode, pattern, 1, self->dynsym, cnt, self->dynstr,
+                               self->dynstr_sz, cb, data);
+      if (0 != result) goto end;
+    }
+  }
+
+  if (which & FASTSYM_ENUM_SYMTAB) {
+    xdl_ensure_symtab_loaded(self);
+    if (NULL != self->symtab) {  // silently skipped when unreadable / no debugdata
+      result = fast_enum_table(self, mode, pattern, 0, self->symtab, self->symtab_cnt,
+                               self->strtab, self->strtab_sz, cb, data);
+    }
+  }
+
+end:
+  return result;
+}

@@ -2,7 +2,7 @@
 
 - 头文件：`include/fastsym.h`（核心 + 可选缓存，单头文件）
 - 库文件：`libs/<abi>/libfastsym.a`（预编译静态库；同目录另有 `.so` 共享库产物）
-- 构建系统：CMake，`add_subdirectory(fastsym)` 后 `target_link_libraries(yourlib fastsym log)`
+- 构建系统：CMake，`add_subdirectory(fastsym)` 后 `target_link_libraries(mylib fastsym log)`
 
 通用约定（适用于所有函数）：
 
@@ -255,6 +255,77 @@ void *fastsym_open2(const fastsym_dl_info_t *dl_info);
 | `xdl_info`（`XDL_DI_DLINFO`） | `fastsym_lib_info` |
 
 xDL 公开 API 已 100% 覆盖；额外能力（编译期哈希、NEON GNU hash、`.gnu_debugdata` LZMA symtab、缓存层）为 fastsym 增强。原始 `xdl_*` 符号不导出（`fastsym.map.txt` 收窄），避免符号冲突。
+
+### 符号枚举（模糊匹配）
+
+```c
+typedef enum {
+  FASTSYM_ENUM_EXACT  = 0,  // 名字与 pattern 完全相等
+  FASTSYM_ENUM_PREFIX = 1,  // 名字以 pattern 开头
+  FASTSYM_ENUM_SUBSTR = 2,  // pattern 出现在名字任意位置
+} fastsym_enum_mode_t;
+
+#define FASTSYM_ENUM_DYNSYM 0x1  // 遍历 .dynsym（导出符号，始终可用）
+#define FASTSYM_ENUM_SYMTAB 0x2  // 遍历 .symtab（含 hidden，磁盘不可读时静默跳过）
+
+typedef int (*fastsym_enum_cb_t)(const char *sym_name, void *sym_addr,
+                                 size_t sym_size, int is_dynsym, void *data);
+
+int fastsym_enum_symbols(void *handle, fastsym_enum_mode_t mode,
+                         const char *pattern, int which,
+                         fastsym_enum_cb_t cb, void *data);
+```
+
+逐个符号回调匹配结果（mangled 名 / 运行时地址 / `st_size` / 来源表）。要点：
+
+- **确定性字符串过滤**，不是"智能猜测"——允许只给部分名字（中间片段用 SUBSTR，重载一族用 PREFIX）。
+- 同名多份（本地定义、`.llvm.<n>` 后缀克隆）各自回调一次，各带自己的地址。
+- 回调返回**非零立即停止**，该返回值透传给调用方；返回 0 表示遍历完成。
+- `which` 传 `FASTSYM_ENUM_DYNSYM | FASTSYM_ENUM_SYMTAB` 组合；SYMTAB 不可用时跳过不算错。
+- 失败（参数错误 / 内部故障）返回 -1，错误码写入 `fastsym_last_error`；"没匹配到"返回 0 且不回调，**不算错误**。
+- 典型用途：hook 前批量找出某个 C++ 函数的全部重载；调查未知库有哪些符号。
+
+```c
+// 例：找出 libart 里所有 PrettyMethod 重载
+static int on_sym(const char *name, void *addr, size_t size, int is_dynsym, void *data) {
+  printf("%s %p\n", name, addr);
+  return 0;  // 继续遍历
+}
+fastsym_enum_symbols(h, FASTSYM_ENUM_PREFIX, "PrettyMethod",
+                     FASTSYM_ENUM_DYNSYM | FASTSYM_ENUM_SYMTAB, on_sym, NULL);
+```
+
+### Demangle（符号名可读化）
+
+```c
+const char *fastsym_demangle(const char *mangled, char *buf, size_t buf_len);
+```
+
+把 Itanium C++ mangled 名（`_Z` 开头）解析成人可读形式，写入 `buf`（建议 ≥256 字节）。
+
+- 成功：返回 `buf`，内容为 `art::ArtMethod::PrettyMethod()` 这类可读名。
+- **失败不是错误**：名字不是合法 mangling / 解析不了 / 放不进 `buf_len` 时，原样返回传入的 `mangled` 指针（`last_error` 保持 OK）。用 `返回值 == buf` 即可判断成功。
+- 实现为 LLVM 官方 ItaniumDemangle（vendored，单 .cpp + 头文件），与 `llvm-objdump`/`c++filt` 同源，覆盖完整 Itanium 语法（模板、替换、折叠、lambda、guard variable 等）——非简化版。
+- 线程安全：是（内部无共享状态）。
+- 与枚举 API 组合：`fastsym_enum_symbols` 枚举出 mangled 名 → `fastsym_demangle` 逐个转可读展示。
+
+```c
+char buf[256];
+const char *r = fastsym_demangle("_ZN3art9ArtMethod12PrettyMethodEv", buf, sizeof buf);
+printf("%s\n", r);  // 返回 buf: "art::ArtMethod::PrettyMethod()"；失败时返回原串
+```
+
+### 句柄校验
+
+```c
+bool fastsym_is_valid(void *handle);
+```
+
+判断 `handle` 是否是当前存活的 `fastsym_open` 句柄（未 close）。
+
+- 传野指针 / 已 close 的句柄 → `false`，**不触发 SIGSEGV guard**。
+- 对无效句柄做查找：返回 `NULL` 且 `fastsym_last_error()` 为 `FASTSYM_E_BAD_HANDLE`（区别于 `FASTSYM_E_INTERNAL`，调试时能立刻分清是调用方 handle 管理错了还是库内部故障）。
+- 线程安全：是（内部注册表有锁）；但 close 与 is_valid/查找并发时仍以 close 为准（use-after-close 本身是调用方错误）。
 
 ---
 
